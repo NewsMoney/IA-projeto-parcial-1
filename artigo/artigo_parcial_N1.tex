@@ -1,0 +1,535 @@
+\documentclass[12pt]{article}
+
+\usepackage{sbc-template}
+\usepackage{graphicx,url}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\IfFileExists{portuges.ldf}{\usepackage[brazil]{babel}}{%
+  \renewcommand{\figurename}{Figura}\renewcommand{\tablename}{Tabela}%
+  \renewcommand{\refname}{Referências}}
+
+\sloppy
+
+% Marcador de conteúdo que depende da execução do notebook
+\newcommand{\pend}[1]{\textcolor{red}{\textbf{[#1]}}}
+% Figura gerada pelo notebook (mostra aviso enquanto o arquivo não existir)
+\newcommand{\figura}[4]{%
+\begin{figure}[ht]\centering
+\IfFileExists{figuras/#1}{\includegraphics[width=#2\textwidth]{figuras/#1}}%
+{\fbox{\parbox[c][3cm][c]{#2\textwidth}{\centering\pend{figura \texttt{\detokenize{#1}} gerada pelo notebook}}}}
+\caption{#3}\label{#4}
+\end{figure}}
+
+\title{Agente Identificador de Fraudes Bancárias: Detecção de Fraudes em
+Transações com Cartão de Crédito por Aprendizado de Máquina Supervisionado}
+
+\author{Cheuk Ki Yu\inst{1}, Gabriela Nellessen de Sousa\inst{1}, Milton Almeida Leoncio\inst{1}}
+
+\address{Faculdade de Computação e Informática -- Universidade Presbiteriana Mackenzie\\
+  São Paulo -- SP -- Brasil
+  \email{\{10419664, 10441930, 10416764\}@mackenzista.com.br}
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Card fraud imposes large losses on consumers and financial institutions, and
+its detection is hindered by extreme class imbalance. This partial report
+formalizes fraud detection as a supervised binary classification task on the
+public ULB Credit Card Fraud dataset (284,807 transactions, 0.172\% frauds).
+We present an exploratory data analysis, a leakage-free preparation pipeline
+(deduplication, cyclic time encoding, log-scaled amount, stratified and
+temporal splits, SMOTE inside the training folds) and baseline results for
+Logistic Regression and Random Forest, evaluated with PR-AUC, recall and MCC
+instead of accuracy. The best baseline, a class-weighted Random Forest, reached PR-AUC of 0.80 and MCC of 0.84, while accuracy proved uninformative (99.8\% for a trivial classifier). The next
+stage will compare tuned Random Forest, XGBoost and SVM, add explainability
+and discuss ethical risks such as false positives.
+\end{abstract}
+
+\begin{resumo}
+Fraudes com cartão geram grandes perdas a consumidores e instituições
+financeiras, e sua detecção é dificultada pelo extremo desbalanceamento entre
+classes. Este artigo parcial formaliza a detecção de fraudes como classificação
+binária supervisionada sobre o dataset público Credit Card Fraud (ULB), com
+284.807 transações e 0,172\% de fraudes. São apresentadas a análise
+exploratória, um processo de preparação sem vazamento de dados (remoção de
+duplicatas, codificação cíclica do tempo, transformação logarítmica do valor,
+divisões estratificada e temporal e SMOTE apenas no treino) e resultados de
+referência com Regressão Logística e Random Forest, avaliados por PR-AUC,
+Recall e MCC em vez de acurácia. O melhor modelo de referência, uma Random Forest com pesos balanceados, obteve
+PR-AUC de 0,80 e MCC de 0,84, enquanto a acurácia se mostrou pouco informativa (99,8\% para um classificador trivial). A próxima etapa comparará Random Forest ajustada, XGBoost e
+SVM, com explicabilidade e análise de riscos éticos.
+\end{resumo}
+
+% =====================================================================
+\section{Introdução}
+
+\subsection{Contextualização}
+
+A digitalização dos meios de pagamento ampliou o volume de transações
+eletrônicas e, com ele, as oportunidades de fraude. No Brasil, a Federação
+Brasileira de Bancos (Febraban) estimou em R\$~10,1 bilhões as perdas com
+golpes e fraudes em canais eletrônicos e cartões em 2024, alta de 17\% em
+relação a 2023 \cite{poder360:2025}. Para as instituições financeiras,
+identificar rapidamente uma transação fraudulenta entre milhões de transações
+legítimas é um problema de decisão sob incerteza, no qual regras fixas escritas
+por especialistas tendem a ficar desatualizadas diante de novas estratégias dos
+fraudadores \cite{dalpozzolo:2018}.
+
+O aprendizado de máquina oferece uma alternativa: modelos que aprendem, a partir
+de transações históricas rotuladas, padrões que distinguem operações legítimas
+de fraudulentas. O problema, porém, tem uma dificuldade central: as fraudes são
+raras. No conjunto de dados usado neste trabalho, elas correspondem a cerca de
+0,17\% das transações \cite{kaggle:ulb}, o que torna métricas usuais, como a
+acurácia, enganosas e exige técnicas específicas de tratamento do
+desbalanceamento \cite{chawla:2002,saito:2015}.
+
+\subsection{Justificativa}
+
+Um sistema de detecção precisa equilibrar dois tipos de erro com custos
+distintos. O \emph{falso negativo} (fraude não detectada) gera prejuízo
+financeiro direto. O \emph{falso positivo} (transação legítima bloqueada) gera
+atrito com o cliente, custo operacional de análise manual e perda de confiança.
+Comparar de forma controlada diferentes algoritmos e estratégias de
+balanceamento, com métricas adequadas a classes raras, fornece evidência
+quantitativa para escolher modelos que reduzam ambos os erros. O tema se alinha
+aos Objetivos de Desenvolvimento Sustentável (ODS) 8, por contribuir para um
+sistema financeiro mais seguro e com menos perdas econômicas; 9, pela aplicação
+de ciência de dados e inovação tecnológica à infraestrutura financeira; e 16,
+pelo combate a crimes financeiros.
+
+\subsection{Motivação}
+
+A motivação do grupo está em aplicar os conteúdos da disciplina a um problema
+real, de alto impacto e com dificuldades técnicas não triviais (desbalanceamento
+extremo, atributos anonimizados e custo assimétrico dos erros). O projeto também
+será aprofundado no Trabalho de Conclusão de Curso dos integrantes, o que
+reforça a importância de uma base metodológica sólida e reprodutível desde esta
+etapa.
+
+\subsection{Objetivo}
+
+Desenvolver e avaliar modelos de aprendizado de máquina supervisionado para
+classificar transações com cartão de crédito como legítimas ou fraudulentas,
+comparando algoritmos (Regressão Logística como referência, Random Forest,
+XGBoost e SVM) e estratégias de tratamento do desbalanceamento (pesos de classe
+e SMOTE), com ênfase na maximização da detecção de fraudes (Recall) e no
+controle dos falsos positivos (Precisão).
+
+\subsection{Contribuições esperadas}
+
+Espera-se contribuir com: (i) a formalização da detecção de fraudes como tarefa
+de classificação binária supervisionada; (ii) uma análise exploratória
+documentada do dataset, identificando suas características e limitações; (iii)
+um protocolo experimental sem vazamento de dados, com validação estratificada e
+temporal; (iv) a comparação quantitativa entre modelos e estratégias de
+balanceamento por métricas adequadas a classes raras; (v) a análise dos
+atributos mais relevantes às decisões dos modelos; (vi) um protótipo capaz de
+classificar novas transações; e (vii) um repositório público que permita
+reproduzir todos os experimentos.
+
+\subsection{Evolução em relação à proposta}
+
+Em relação à proposta inicial, o escopo foi refinado em quatro pontos. Primeiro,
+o dataset foi definido (Seção~\ref{sec:dataset}). Segundo, a acurácia deixou de
+ser métrica de decisão, pois um classificador que rotula todas as transações
+como legítimas já atinge cerca de 99,8\%; as métricas principais passaram a ser
+PR-AUC, Recall, Precisão, F1 e MCC \cite{saito:2015,chicco:2020}. Terceiro, foi
+acrescentada uma validação com divisão temporal, mais próxima do uso real. Por
+fim, como o dataset cobre apenas dois dias, a adaptação a novas estratégias de
+fraude ao longo do tempo (\emph{concept drift}) será discutida como limitação,
+e não avaliada experimentalmente.
+
+% =====================================================================
+\section{Fundamentação Teórica}
+
+\subsection{Agentes, aprendizado supervisionado e classificação}
+
+Em Inteligência Artificial, um agente é uma entidade que percebe o ambiente e
+age sobre ele \cite{russell:2021}. No sistema proposto, o agente percebe cada
+nova transação, estima sua probabilidade de fraude por meio de um modelo
+aprendido e age emitindo ou não um alerta para análise. O modelo é obtido por
+\emph{aprendizado supervisionado}: dado um conjunto de exemplos
+$\{(\mathbf{x}_i, y_i)\}$, em que $\mathbf{x}_i$ é o vetor de atributos da
+transação e $y_i \in \{0, 1\}$ indica se ela é fraudulenta, busca-se uma função
+$f(\mathbf{x})$ que generalize para transações não vistas. A saída é uma
+probabilidade, convertida em decisão por um limiar $\tau$. A escolha de $\tau$
+controla diretamente o compromisso entre Precisão e Recall.
+
+\subsection{Aprendizado com classes desbalanceadas}
+
+Quando uma classe é muito rara, algoritmos que minimizam o erro global tendem a
+ignorá-la. Há duas famílias de soluções. Nas abordagens em nível de algoritmo,
+atribui-se peso maior aos erros na classe minoritária (\emph{class weights}).
+Nas abordagens em nível de dados, a distribuição de treino é reamostrada. O
+SMOTE (\emph{Synthetic Minority Over-sampling Technique}) cria exemplos
+sintéticos da classe minoritária por interpolação entre um exemplo e seus
+vizinhos mais próximos \cite{chawla:2002}. A reamostragem deve ser aplicada
+somente nos dados de treino, pois aplicá-la antes da divisão contamina o
+conjunto de teste e superestima o desempenho. Além disso, ela altera as
+probabilidades estimadas pelo modelo, o que pode exigir calibração posterior
+\cite{dalpozzolo:2015}.
+
+\subsection{Modelos de classificação}
+
+A \textbf{Regressão Logística} modela a probabilidade de fraude como uma função
+sigmoide de uma combinação linear dos atributos. É simples e interpretável,
+por isso serve de referência. A \textbf{Random Forest} \cite{breiman:2001}
+combina muitas árvores de decisão treinadas sobre amostras \emph{bootstrap} e
+subconjuntos aleatórios de atributos. A votação reduz a variância e captura
+relações não lineares. O \textbf{XGBoost} \cite{chen:2016} constrói árvores
+sequencialmente por \emph{gradient boosting}, cada uma corrigindo os resíduos
+das anteriores, com regularização e parâmetro próprio para desbalanceamento. As
+\textbf{Máquinas de Vetores de Suporte} (SVM) \cite{cortes:1995} buscam o
+hiperplano de margem máxima entre as classes, podendo usar \emph{kernels} para
+fronteiras não lineares. Seu custo de treinamento cresce de forma
+aproximadamente quadrática com o número de exemplos, o que exige subamostragem
+ou versão linear em bases grandes.
+
+\subsection{Métricas de avaliação}
+
+Sejam VP, FP, VN e FN os verdadeiros positivos, falsos positivos, verdadeiros
+negativos e falsos negativos. A \emph{Precisão} ($\frac{VP}{VP+FP}$) mede a
+fração de alertas que são fraudes reais. O \emph{Recall}
+($\frac{VP}{VP+FN}$) mede a fração de fraudes detectadas, e o \emph{F1} é a
+média harmônica das duas. A área sob a curva Precisão--Recall (PR-AUC, ou
+\emph{average precision}) resume o desempenho em todos os limiares e é mais
+informativa que a área sob a curva ROC quando a classe positiva é rara
+\cite{saito:2015}. O coeficiente de correlação de Matthews (MCC) considera as
+quatro células da matriz de confusão e só é alto quando o classificador acerta
+bem ambas as classes \cite{chicco:2020}.
+
+\subsection{Trabalhos relacionados}
+
+Em \cite{bhattacharyya:2011}, os autores compararam Regressão
+Logística, SVM e Random Forest em dados reais de transações de cartão e
+concluíram que a Random Forest apresentou o melhor desempenho geral, destacando
+a importância de avaliar os modelos sob diferentes proporções de fraude.
+Os autores do dataset utilizado neste trabalho
+\cite{dalpozzolo:2015} mostraram que a subamostragem da classe majoritária
+distorce as probabilidades previstas e propuseram uma correção de calibração.
+Em trabalho posterior, \cite{dalpozzolo:2018}
+argumentam que avaliações realistas devem considerar a ordem temporal das
+transações, o atraso na chegada dos rótulos e o número limitado de alertas que
+analistas conseguem verificar, propondo métricas de precisão sobre os alertas.
+
+No mesmo dataset, \cite{awoyemi:2017} avaliaram Naïve
+Bayes, k-vizinhos mais próximos (KNN) e Regressão Logística com amostragem
+híbrida, e o KNN obteve o melhor desempenho entre os três.
+Já \cite{varmedja:2019} aplicaram SMOTE e compararam
+Regressão Logística, Random Forest, Naïve Bayes e Perceptron Multicamadas, com
+melhor resultado geral para a Random Forest. Ambos os estudos, porém,
+aplicaram a reamostragem com pouco detalhe sobre o protocolo e enfatizaram a
+acurácia, o que dificulta a comparação direta.
+O estudo de \cite{carcillo:2021} mostrou que incluir escores de
+detecção de anomalias não supervisionada como atributos de modelos
+supervisionados pode melhorar a detecção. Por fim, o manual de
+\cite{leborgne:2022} sistematiza boas práticas
+reprodutíveis, com ênfase em validação temporal e métricas voltadas a alertas.
+
+Esses trabalhos fundamentam as decisões deste projeto: comparar modelos de
+\emph{ensemble} (que se destacam na literatura) contra uma referência linear;
+aplicar SMOTE apenas no treino; priorizar PR-AUC e MCC em vez de acurácia; e
+incluir uma validação temporal. A Tabela~\ref{tab:relacionados} resume a
+comparação.
+
+\begin{table}[ht]
+\centering
+\caption{Síntese dos trabalhos relacionados}
+\label{tab:relacionados}
+\footnotesize
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.3cm}>{\raggedright\arraybackslash}p{3.2cm}X@{}}
+\toprule
+\textbf{Trabalho} & \textbf{Técnicas} & \textbf{Solução obtida / relação com este projeto} \\
+\midrule
+Bhattacharyya et al. (2011) & RL, SVM, RF & RF com melhor desempenho geral; motiva o uso de \emph{ensembles}. \\
+Dal Pozzolo et al. (2015) & Subamostragem, calibração & Correção das probabilidades após reamostragem; alerta para efeitos do balanceamento. \\
+Dal Pozzolo et al. (2018) & Aprendizado com \emph{feedback} e rótulos atrasados & Avaliação realista e temporal; motiva a validação temporal. \\
+Awoyemi et al. (2017) & NB, KNN, RL + amostragem híbrida & KNN superior no mesmo dataset; ênfase em acurácia. \\
+Varmedja et al. (2019) & RL, RF, NB, MLP + SMOTE & RF com melhor resultado geral no mesmo dataset. \\
+Carcillo et al. (2021) & Não supervisionado + supervisionado & Escores de anomalia como atributos melhoram a detecção; possível extensão futura. \\
+Le Borgne et al. (2022) & Diversos & Boas práticas reprodutíveis, validação temporal e métricas voltadas a alertas. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% =====================================================================
+\section{Metodologia e Resultados Esperados}
+
+\subsection{Abordagem e etapas}
+
+O projeto segue um fluxo típico de ciência de dados, implementado em Python com
+scikit-learn \cite{pedregosa:2011} e imbalanced-learn \cite{lemaitre:2017}:
+
+\begin{enumerate}
+\item \textbf{Aquisição e análise exploratória} (N1): estrutura, qualidade,
+desbalanceamento e separabilidade dos atributos.
+\item \textbf{Preparação} (N1): remoção de duplicatas, engenharia de atributos,
+divisão treino/teste e padronização.
+\item \textbf{Modelos de referência} (N1): classificador trivial, Regressão
+Logística (com pesos e com SMOTE) e Random Forest com pesos balanceados.
+\item \textbf{Modelagem e ajuste} (N2): Random Forest, XGBoost e SVM, com busca
+de hiperparâmetros por validação cruzada estratificada e comparação entre
+pesos de classe e SMOTE.
+\item \textbf{Escolha do limiar e avaliação} (N2): definição de $\tau$ em
+validação, avaliação final no teste e na divisão temporal.
+\item \textbf{Explicabilidade} (N2): importância por permutação e valores SHAP
+\cite{lundberg:2017}.
+\item \textbf{Protótipo} (N2): aplicação que recebe uma transação e devolve a
+probabilidade de fraude e a decisão.
+\end{enumerate}
+
+Em todas as etapas, as transformações que aprendem parâmetros dos dados
+(padronização e SMOTE) são encapsuladas em \emph{pipelines} ajustados somente
+no treino (e em cada dobra da validação cruzada), evitando vazamento de
+informação para o teste.
+
+\subsection{Resultados esperados}
+
+Espera-se que os modelos de \emph{ensemble} superem a Regressão Logística em
+PR-AUC e MCC, em linha com a literatura \cite{bhattacharyya:2011,varmedja:2019},
+e que SMOTE e pesos de classe aumentem o Recall à custa de parte da Precisão.
+Espera-se também que o desempenho na divisão temporal seja igual ou inferior ao
+da divisão aleatória, evidenciando o efeito da ordem temporal.
+
+\subsection{Dataset}\label{sec:dataset}
+
+\subsubsection{Origem e conteúdo}
+
+Foi utilizado o dataset \emph{Credit Card Fraud Detection}, coletado pelo
+Machine Learning Group da Université Libre de Bruxelles em colaboração com a
+Worldline e disponibilizado publicamente no Kaggle
+\cite{kaggle:ulb,dalpozzolo:2015}. Ele contém 284.807 transações realizadas em
+dois dias de setembro de 2013 por portadores de cartão europeus, das quais 492
+são fraudes (0,172\%). Os atributos \texttt{V1}--\texttt{V28} são componentes
+principais (PCA) de atributos originais não divulgados por confidencialidade.
+Apenas \texttt{Time} (segundos desde a primeira transação) e \texttt{Amount}
+(valor) não foram transformados. A variável-alvo é \texttt{Class}.
+
+\subsubsection{Qualidade, adequação e limitações}
+
+Por serem transações reais rotuladas, os dados são representativos do
+problema, e a anonimização por PCA elimina dados pessoais. Isso, porém, tem
+custos: (i) \texttt{V1}--\texttt{V28} não têm significado semântico, o que
+limita a engenharia de atributos e a explicabilidade das decisões para
+usuários finais; (ii) como o horário real de início da coleta não é informado,
+a hora derivada de \texttt{Time} é relativa; (iii) dois dias não permitem
+avaliar sazonalidade nem \emph{concept drift}; (iv) as fraudes são poucas em
+números absolutos, o que torna as métricas sensíveis a poucos erros e exige
+cautela na interpretação; e (v) não há atributos demográficos, o que impede
+auditar vieses contra grupos específicos. Essas limitações são consideradas na
+interpretação dos resultados.
+
+\subsubsection{Análise exploratória}
+
+As 284.807 transações abrangem 48 horas. O conjunto não possui valores
+ausentes, mas contém 1.081 linhas duplicadas, das quais 19 são fraudes. A
+Figura~\ref{fig:classes} mostra o desbalanceamento: após a remoção das
+duplicatas, restam 283.253 transações legítimas e 473 fraudes (0,167\%), uma
+razão de aproximadamente 599:1.
+
+\figura{fig01_distribuicao_classes.png}{0.5}{Distribuição das classes (escala
+logarítmica)}{fig:classes}
+
+Quanto ao valor (Figura~\ref{fig:amount}), as fraudes têm mediana
+\emph{menor} que as transações legítimas (9,82 contra 22,00), mas média
+\emph{maior} (123,87 contra 88,41). Isso indica uma concentração de fraudes em
+valores muito baixos, possivelmente testes de validade do cartão, ao lado de
+algumas fraudes de valor elevado. Transações de valor zero são 5,3\% das
+fraudes e apenas 0,6\% das legítimas. O maior valor legítimo (25.691,16) supera
+em muito a maior fraude (2.125,87), e a distribuição é fortemente assimétrica:
+11,2\% das transações estão acima de $Q_3 + 1{,}5\,\mathrm{IQR}$. Por isso, optou-se pela
+transformação logarítmica em vez da remoção de valores extremos, que em fraude
+podem ser justamente os casos de interesse. A estatística de
+Kolmogorov--Smirnov (KS) entre as classes para \texttt{Amount} foi de
+0,265, indicando separação apenas moderada. O valor, isoladamente, não
+identifica fraudes.
+
+\figura{fig02_amount_por_classe.png}{0.6}{Distribuição de $\log(1+\mathrm{Amount})$
+por classe}{fig:amount}
+
+A Figura~\ref{fig:tempo} mostra o volume de transações e a taxa de fraude por
+hora relativa. Há um ciclo nítido: entre as horas relativas 1 e 7 o volume
+cai drasticamente (mínimo na hora 4), padrão compatível com o período noturno.
+Nesse intervalo, a taxa de fraude sobe e atinge 1,45\% na hora 2, cerca de
+5,5 vezes a média horária de 0,26\%. Como o denominador é pequeno nessas horas,
+parte da variação pode ser ruído. Ainda assim, o padrão justifica incluir a
+hora como atributo.
+
+\figura{fig03_tempo_hora.png}{0.75}{Volume de transações e taxa de fraude por
+hora relativa ao início da coleta}{fig:tempo}
+
+Entre os componentes PCA, a correlação máxima em módulo entre pares foi de
+0,019, confirmando a quase ortogonalidade esperada da PCA. Os atributos
+mais correlacionados com a classe têm correlação negativa, com destaque para
+\texttt{V17} ($-0{,}31$), \texttt{V14} ($-0{,}29$) e \texttt{V12} ($-0{,}25$)
+(Figura~\ref{fig:corr}). Pela estatística KS, os mais separadores são
+\texttt{V14} (0,84), \texttt{V10} (0,80), \texttt{V12} (0,78) e \texttt{V4}
+(0,76) (Figura~\ref{fig:ks}), enquanto 4 componentes apresentaram KS inferior
+a 0,1. Isso indica que a informação discriminativa
+está concentrada em poucos componentes.
+
+\figura{fig04_correlacao_classe.png}{0.6}{Atributos mais correlacionados com a
+classe}{fig:corr}
+
+\figura{fig05_top4_ks.png}{0.95}{Distribuições por classe dos quatro atributos
+com maior estatística KS}{fig:ks}
+
+\subsubsection{Preparação dos dados}
+
+Com base na análise, foram tomadas as seguintes decisões: (i) remoção das
+duplicatas antes da divisão, evitando que a mesma transação apareça no treino e
+no teste; (ii) substituição de \texttt{Time} pela hora relativa em codificação
+cíclica ($\sin$ e $\cos$ de $2\pi h/24$), que preserva a proximidade entre 23h
+e 0h; (iii) transformação $\log(1+\mathrm{Amount})$; (iv) divisão estratificada
+80/20 com semente fixa, resultando em 226.980 transações de treino
+(378 fraudes) e 56.746 de teste (95 fraudes); (v) padronização
+com \texttt{RobustScaler} (mediana e intervalo interquartil), menos sensível a
+valores extremos; e (vi) SMOTE aplicado somente ao treino, dentro do
+\emph{pipeline}. O conjunto final possui 31 atributos.
+
+% =====================================================================
+\section{Resultados Parciais}
+
+\subsection{Aspectos éticos e responsabilidade no uso da IA}
+
+\textbf{Privacidade e proteção de dados.} O dataset foi anonimizado pelos
+autores antes da publicação e não contém dados pessoais identificáveis. O grupo
+não fará nenhuma tentativa de reidentificação. Em uma aplicação real, dados de
+transações são dados pessoais sujeitos à LGPD \cite{lgpd:2018}. O uso para
+prevenção de fraudes precisaria de base legal adequada, minimização dos dados
+coletados e controles de acesso e retenção.
+
+\textbf{Custo assimétrico dos erros.} Um falso positivo bloqueia a compra
+legítima de um cliente, o que pode ter consequências sérias (por exemplo, numa
+compra de medicamento ou numa emergência). Um falso negativo transfere o
+prejuízo ao cliente ou à instituição. Por isso, o projeto reporta os dois tipos
+de erro separadamente, escolhe o limiar de decisão de forma explícita e propõe
+que o modelo atue como \emph{apoio à decisão}: alertas vão para verificação (por
+exemplo, confirmação com o cliente), e não para bloqueio definitivo automático.
+
+\textbf{Transparência e explicabilidade.} A LGPD garante ao titular o direito de
+solicitar a revisão de decisões tomadas unicamente com base em tratamento
+automatizado (art.~20). Como \texttt{V1}--\texttt{V28} não têm significado
+semântico, explicações em termos desses atributos são úteis para auditoria
+técnica, mas não para o cliente. O projeto usará SHAP \cite{lundberg:2017}
+para auditoria e reconhece essa limitação. Em produção, seriam necessários
+atributos interpretáveis.
+
+\textbf{Viés e equidade.} A ausência de atributos demográficos protege a
+privacidade, mas impede verificar se o modelo erra mais para determinados
+grupos, por exemplo, gerando mais bloqueios para perfis de consumo menos comuns.
+Esse risco não pode ser descartado. Em um uso real, seria necessária auditoria
+periódica das taxas de falso positivo por segmento.
+
+\textbf{Robustez e responsabilidade.} Fraudadores adaptam seu comportamento, e
+um modelo treinado em dois dias de 2013 não deve ser tratado como válido para o
+cenário atual. Resultados obtidos neste dataset público não devem ser
+apresentados como garantia de desempenho em produção. Medidas de mitigação
+seriam o monitoramento contínuo, o retreinamento periódico e a supervisão
+humana dos alertas.
+
+\subsection{Resultados parciais obtidos}
+
+A Tabela~\ref{tab:baselines} apresenta os resultados dos modelos de referência
+no conjunto de teste, com limiar $\tau = 0{,}5$, e a PR-AUC média na validação
+cruzada estratificada com 5 dobras no treino.
+
+\begin{table}[ht]
+\centering
+\caption{Resultados dos modelos de referência no conjunto de teste}
+\label{tab:baselines}
+\footnotesize
+\begin{tabular}{@{}lccccccc@{}}
+\toprule
+\textbf{Modelo} & \textbf{Acur.} & \textbf{Prec.} & \textbf{Recall} & \textbf{F1} & \textbf{MCC} & \textbf{PR-AUC} & \textbf{PR-AUC (CV)} \\
+\midrule
+Dummy (majoritária) & 0,998 & 0,000 & 0,000 & 0,000 & 0,000 & 0,002 & 0,002 $\pm$ 0,000 \\
+RL (pesos) & 0,975 & 0,056 & \textbf{0,874} & 0,105 & 0,217 & 0,680 & 0,756 $\pm$ 0,027 \\
+RL + SMOTE & 0,974 & 0,053 & \textbf{0,874} & 0,100 & 0,212 & 0,678 & 0,756 $\pm$ 0,025 \\
+RF (pesos) & 0,9995 & \textbf{0,972} & 0,726 & \textbf{0,831} & \textbf{0,840} & \textbf{0,801} & \textbf{0,837} $\pm$ 0,030 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+O classificador trivial confirma que a acurácia é enganosa neste problema:
+ele atinge 99,8\% sem detectar nenhuma fraude. As métricas focadas na classe
+positiva revelam diferenças que a acurácia esconde.
+
+As duas variantes de Regressão Logística detectaram 83 das 95 fraudes do teste
+(Recall de 87,4\%), mas geraram cerca de 1.400 falsos positivos
+(Figura~\ref{fig:cm}), ou seja, aproximadamente 17 alertas falsos para cada
+fraude detectada (Precisão de 5,6\%). A Random Forest apresentou o
+comportamento oposto: apenas 2 falsos positivos (Precisão de 97,2\%), mas 26
+fraudes não detectadas (Recall de 72,6\%). Nas métricas que resumem o
+equilíbrio entre os erros, a Random Forest foi claramente superior: MCC de 0,84
+contra 0,22 e PR-AUC de 0,80 contra 0,68. O resultado da validação cruzada
+(0,84 $\pm$ 0,03 contra 0,76 $\pm$ 0,03) confirma que a diferença não se deve à
+partição de teste escolhida.
+
+Dois achados merecem destaque. Primeiro, o SMOTE não trouxe ganho em relação
+aos pesos de classe na Regressão Logística: os resultados foram praticamente
+idênticos, com ligeiro aumento de falsos positivos (1.477 contra 1.406) e maior
+custo computacional. Na N2, a comparação entre as duas estratégias será
+repetida nos modelos de árvores. Segundo, a Random Forest teve ROC-AUC
+\emph{menor} que a Regressão Logística (0,935 contra 0,963), embora tenha PR-AUC
+muito maior (Figura~\ref{fig:pr}). Isso ilustra empiricamente o argumento de
+\cite{saito:2015}: com classes raras, a curva ROC é dominada pela grande massa
+de verdadeiros negativos e pode ordenar os modelos de forma diferente da curva
+Precisão--Recall, que reflete melhor o custo operacional dos alertas.
+
+Os perfis opostos de erro mostram também que o limiar padrão $\tau = 0{,}5$ não
+é adequado para ambos. A escolha do limiar em validação, conforme o custo
+relativo de falsos positivos e falsos negativos, é portanto uma etapa
+necessária da N2.
+
+\figura{fig06_curvas_pr.png}{0.6}{Curvas Precisão--Recall no conjunto de
+teste}{fig:pr}
+
+\figura{fig07_matrizes_confusao.png}{0.95}{Matrizes de confusão dos modelos de
+referência}{fig:cm}
+
+A importância dos atributos na Random Forest (Figura~\ref{fig:imp}) é
+coerente com a análise exploratória. Os seis atributos mais importantes
+(\texttt{V14}, \texttt{V10}, \texttt{V12}, \texttt{V4}, \texttt{V11} e
+\texttt{V17}) são exatamente os seis de maior estatística KS, e \texttt{V14}
+concentra sozinho 22\% da importância total. Os atributos derivados de valor e
+hora não aparecem entre os dez mais importantes, o que sugere que sua
+informação é, em grande parte, redundante com os componentes PCA.
+
+\figura{fig08_importancia_rf.png}{0.6}{Atributos mais importantes na Random
+Forest}{fig:imp}
+
+Na divisão temporal (treino nas primeiras 80\% das transações e teste nas 20\%
+finais, com 74 fraudes), a Random Forest manteve PR-AUC de 0,80 e Precisão de
+98,0\%, mas o Recall caiu de 72,6\% para 67,6\%. A Regressão Logística teve
+PR-AUC de 0,76, mas dobrou os falsos positivos (2.836) com o limiar padrão. Ao
+contrário do esperado, não houve degradação expressiva da Random Forest. Como
+o conjunto cobre apenas dois dias, isso não demonstra robustez a mudanças de
+padrão de fraude ao longo de meses: indica apenas que não há mudança forte
+dentro dessa janela.
+
+Uma limitação deve ser considerada ao interpretar todos esses números: com
+95 fraudes no teste, cada fraude corresponde a cerca de 1,05 ponto percentual
+de Recall. Por isso, as comparações devem se apoiar também na validação
+cruzada. Esses resultados estabelecem o patamar que os modelos da próxima etapa
+(Random Forest ajustada, XGBoost e SVM) devem superar, a saber PR-AUC de 0,80
+e MCC de 0,84, com atenção especial ao aumento do Recall sem perda
+significativa de Precisão.
+
+\subsection{Repositório}
+
+Os artefatos deste trabalho (artigo, descrição do dataset, notebook e
+resultados) estão disponíveis em:
+\pend{\texttt{https://github.com/USUARIO/REPOSITORIO}}.
+
+\bibliographystyle{sbc}
+\bibliography{referencias}
+
+\end{document}
